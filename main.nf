@@ -47,198 +47,51 @@ log.info """\
          """
          .stripIndent()
 
+include { FASTQC }                      from '../processes/fastqc'
+include { MULTIQC }                     from '../processes/multiqc'
+include { TRIMMING }                    from '../processes/trimming'
+include { STAR_INDEX_GENERATE }         from '../processes/star_index_generate'
+include { STAR_ALIGN }                  from '../processes/star_align'
 
-/* 1. Performing QC on fastq files */
+// TO BE REMOVED IF POSSIBLE
+// process FASTQC_TRIMMED {
+//     tag "FastQC on trimmed $sample_id"
+//     publishDir "$params.outdir", mode:'copy'
+//     conda "bioconda::fastqc=0.11.9"
 
-process FASTQC {
-    tag "FastQC on $sample_id"
-    publishDir "$params.outdir", mode:'copy'
-    conda "bioconda::fastqc=0.11.9"
+//     input:
+//     tuple val(sample_id), path(reads) 
 
-    input:
-    tuple val(sample_id), path(reads) 
+//     output:
+//     path "${params.dataset}/fastqc/trimmed/${sample_id}/" 
 
-    output:
-    path "${params.dataset}/fastqc/raw/${sample_id}" 
+//     script:
+//     """
+//     mkdir -p "${params.dataset}/fastqc/trimmed/${sample_id}"
 
-    script:
-    """
-    mkdir -p "${params.dataset}/fastqc/raw/${sample_id}"
+//     fastqc -o "${params.dataset}/fastqc/trimmed/${sample_id}/" -q ${reads} 
+//     """  
+// }
 
-    fastqc -o "${params.dataset}/fastqc/raw/${sample_id}" -q ${reads} 
-    """  
-}
+// TO BE REMOVED IF POSSIBLE
+// process MULTIQC_TRIMMED {
+//     tag "MultiQC on trimmed and untrimmed ${params.dataset}"
+//     publishDir "$params.outdir", mode:'copy'
+//     conda "bioconda::multiqc=1.17"
 
-/* Merged report with MultiQC */
+//     input:
+//     path '*'
 
-process MULTIQC {
-    tag "MultiQC on ${params.dataset} dataset"
-    publishDir "$params.outdir", mode:'copy'
-    conda "bioconda::multiqc=1.17"
+//     output:
+//     path "${params.dataset}/multiqc/trimmed"
 
-    input:
-    path '*'
+//     script:
+//     """
+//     mkdir -p "${params.dataset}/multiqc/trimmed"
 
-    output:
-    path "${params.dataset}/multiqc/raw"
-
-    script:
-    """
-    mkdir -p "${params.dataset}/multiqc/raw"
-
-    multiqc . -o "${params.dataset}/multiqc/raw" -n ${params.dataset}_multiqc_report -f -s
-    """
-}
-
-/* Trimming adapters and QC on cDNA reads */
-
-process TRIMMING {
-
-    tag "TrimGalore on ${reads[1]}"
-    publishDir "$params.dataDir", mode:'copy'
-    conda "bioconda::trim-galore=0.6.7"
-    
-    input:
-    tuple val(sample_id), path(reads)
-
-    output:
-    path "trimmed/${sample_id}"
-
-    script:
-
-    """
-    mkdir -p "trimmed/${sample_id}"
-
-    cp ${reads[0]} "trimmed/${sample_id}"
-    trim_galore ${reads[1]} --illumina -q 20 -o "trimmed/${sample_id}"
-    """
-
-}
-
-process FASTQC_TRIMMED {
-    tag "FastQC on trimmed $sample_id"
-    publishDir "$params.outdir", mode:'copy'
-    conda "bioconda::fastqc=0.11.9"
-
-    input:
-    tuple val(sample_id), path(reads) 
-
-    output:
-    path "${params.dataset}/fastqc/trimmed/${sample_id}/" 
-
-    script:
-    """
-    mkdir -p "${params.dataset}/fastqc/trimmed/${sample_id}"
-
-    fastqc -o "${params.dataset}/fastqc/trimmed/${sample_id}/" -q ${reads} 
-    """  
-}
-
-process MULTIQC_TRIMMED {
-    tag "MultiQC on trimmed and untrimmed ${params.dataset}"
-    publishDir "$params.outdir", mode:'copy'
-    conda "bioconda::multiqc=1.17"
-
-    input:
-    path '*'
-
-    output:
-    path "${params.dataset}/multiqc/trimmed"
-
-    script:
-    """
-    mkdir -p "${params.dataset}/multiqc/trimmed"
-
-    multiqc . -o "${params.dataset}/multiqc/trimmed" -n ${params.dataset}_trimmed_multiqc_report -f -s
-    """
-}
-
-process INDEX_GENERATE {
-    tag 'Star genome index generation'
-    publishDir "./references"
-    conda "bioconda::star=2.7.10a bioconda::samtools=1.16.1 conda-forge::gawk=5.1.0"
-
-    input:
-    path fasta
-    path annot
-     
-    output:
-    path 'genome_index' 
-
-    script:       
-    """
-    mkdir genome_index
-    
-    STAR \
-    --runMode genomeGenerate \
-    --runThreadN 4 \
-    --genomeDir genome_index \
-    --genomeFastaFiles ${fasta} \
-    --sjdbGTFfile ${annot} \
-    --genomeSAindexNbases 12 \
-    --genomeSAsparseD 3 \
-    --limitGenomeGenerateRAM 15000000000
-
-    """
-}
-
-'   --sjdbOverhang read_length-1'
-
-process STAR_ALIGN {
-    tag "Alignment on $sample_id"
-    publishDir "$params.outdir"
-    conda "bioconda::star=2.7.10a bioconda::samtools=1.16.1 conda-forge::gawk=5.1.0"
-    
-    input:
-    //
-    // Input reads are expected to come as: [ meta, [ pair1_read1, pair1_read2, pair2_read1, pair2_read2 ] ]
-    // Input array for a sample is created in the same order reads appear in samplesheet as pairs from replicates are appended to array.
-    //
-    tuple val(sample_id), path(reads)
-    path  index
-    path  gtf
-    path  whitelist
-
-    output:
-    path 'alignment/${params.dataset}/${sample_id}'
-    tuple val(sample_id), path('*d.out.bam')      
-    tuple val(sample_id), path('*.Solo.out')     
-    tuple val(sample_id), path('*Log.final.out')  
-    tuple val(sample_id), path('*Log.out')         
-    tuple val(sample_id), path('*Log.progress.out')
-
-    script:
-
-    """
-    mkdir -p alignment/${params.dataset}/${sample_id}
-
-    STAR \\
-        --genomeDir $index \\
-        --genomeLoad LoadAndKeep \\
-        --readFilesIn ${reads[1]} ${reads[0]} \\
-        --runThreadN 8 \\
-        --outFileNamePrefix alignment/${params.dataset}/${sample_id}/ \\
-        --soloType CB_UMI_Simple \\
-        --soloFeatures GeneFull \\
-        --soloCBstart 1 \\
-        --soloCBlen 16 \\
-        --soloUMIstart 17 \\
-        --soloUMIlen 12 \\
-
-    """
-
-}
-
-'''       --soloCBwhitelist $whitelist \\
-        --clipAdapterType CellRanger4 \\
-        --soloMultiMappers EM \\
-        --soloCellFilter EmptyDrops_CR \\
-        --outFilterScoreMin 30 \\
-        --soloCBmatchWLtype 1MM_multi_Nbase_pseudocounts \\
-        --soloUMIfiltering MultiGeneUMI_CR \\
-        --soloUMIdedup 1MM_CR \\
-        --soloStrand Reverse \\
-        --outSAMattributes NH HI AS nM GX GN sM sQ sS '''
+//     multiqc . -o "${params.dataset}/multiqc/trimmed" -n ${params.dataset}_trimmed_multiqc_report -f -s
+//     """
+// }
 
 workflow {
     'Raw reads channel and QC'
